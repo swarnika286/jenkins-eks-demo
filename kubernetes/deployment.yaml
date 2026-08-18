@@ -20,7 +20,7 @@ spec:
       containers:
         - name: jenkins-eks-demo
 
-          image: nginx:latest
+          image: 982344023689.dkr.ecr.us-east-2.amazonaws.com/test-ecr:test
 
           ports:
             - containerPort: 5000
