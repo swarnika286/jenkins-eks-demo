@@ -4,13 +4,15 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-2'
-        AWS_ACCOUNT_ID = 'YOUR_AWS_ACCOUNT_ID'
-        ECR_REPOSITORY = 'jenkins-eks-demo'
-        EKS_CLUSTER_NAME = 'YOUR_EKS_CLUSTER_NAME'
+        AWS_ACCOUNT_ID = '982344023689'
+
+        ECR_REPOSITORY = 'test-ecr'
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+        EKS_CLUSTER_NAME = 'my-test-eks'
         K8S_NAMESPACE = 'default'
 
-        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPOSITORY}"
+        IMAGE = "${ECR_REGISTRY}/${ECR_REPOSITORY}:${BUILD_NUMBER}"
     }
 
     stages {
@@ -25,9 +27,7 @@ pipeline {
             steps {
                 sh '''
                     echo "Running application test..."
-
                     python3 -m py_compile app.py
-
                     echo "Test passed!"
                 '''
             }
@@ -39,7 +39,7 @@ pipeline {
                     echo "Building Docker image..."
 
                     docker build \
-                        -t ${ECR_REPOSITORY}:${BUILD_NUMBER} .
+                        -t ${IMAGE} .
 
                     echo "Docker image built successfully."
                 '''
@@ -52,7 +52,7 @@ pipeline {
                     echo "Logging into ECR..."
 
                     aws ecr get-login-password \
-                        --region ${AWS_REGION} |
+                        --region ${AWS_REGION} | \
                     docker login \
                         --username AWS \
                         --password-stdin ${ECR_REGISTRY}
@@ -63,18 +63,11 @@ pipeline {
         stage('Push Image to ECR') {
             steps {
                 sh '''
-                    echo "Tagging Docker image..."
+                    echo "Pushing ${IMAGE}..."
 
-                    docker tag \
-                        ${ECR_REPOSITORY}:${BUILD_NUMBER} \
-                        ${IMAGE_NAME}:${BUILD_NUMBER}
+                    docker push ${IMAGE}
 
-                    echo "Pushing image to ECR..."
-
-                    docker push \
-                        ${IMAGE_NAME}:${BUILD_NUMBER}
-
-                    echo "Image pushed successfully."
+                    echo "Image pushed successfully!"
                 '''
             }
         }
@@ -91,17 +84,14 @@ pipeline {
                     echo "Applying Kubernetes manifests..."
 
                     kubectl apply \
-                        -f k8s/deployment.yaml \
-                        -n ${K8S_NAMESPACE}
-
-                    kubectl apply \
-                        -f k8s/service.yaml \
+                        -f kubernetes/ \
                         -n ${K8S_NAMESPACE}
 
                     echo "Updating deployment image..."
 
-                    kubectl set image deployment/jenkins-eks-demo \
-                        jenkins-eks-demo=${IMAGE_NAME}:${BUILD_NUMBER} \
+                    kubectl set image \
+                        deployment/jenkins-eks-demo \
+                        jenkins-eks-demo=${IMAGE} \
                         -n ${K8S_NAMESPACE}
 
                     echo "Waiting for rollout..."
@@ -112,30 +102,47 @@ pipeline {
                 '''
             }
         }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    echo "Deployment status:"
+
+                    kubectl get deployment jenkins-eks-demo \
+                        -n ${K8S_NAMESPACE}
+
+                    echo "Pods:"
+
+                    kubectl get pods \
+                        -l app=jenkins-eks-demo \
+                        -n ${K8S_NAMESPACE}
+                '''
+            }
+        }
     }
 
     post {
 
         success {
-            echo '========================================='
-            echo 'Deployment successful!'
-            echo "Docker Image: ${IMAGE_NAME}:${BUILD_NUMBER}"
-            echo '========================================='
+            echo """
+            ========================================
+            DEPLOYMENT SUCCESSFUL
+            ========================================
+            Build: ${BUILD_NUMBER}
+            Image: ${IMAGE}
+            EKS Cluster: ${EKS_CLUSTER_NAME}
+            ========================================
+            """
         }
 
         failure {
-            echo '========================================='
-            echo 'Pipeline failed!'
-            echo 'Check the stage above for the error.'
-            echo '========================================='
-        }
-
-        always {
-            sh '''
-                echo "Cleaning unused Docker images..."
-
-                docker image prune -f || true
-            '''
+            echo """
+            ========================================
+            PIPELINE FAILED
+            ========================================
+            Check the failed stage above.
+            ========================================
+            """
         }
     }
 }
