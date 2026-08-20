@@ -11,8 +11,6 @@ pipeline {
 
         EKS_CLUSTER_NAME = 'my-test-eks'
         K8S_NAMESPACE = 'default'
-
-        
     }
 
     stages {
@@ -23,36 +21,46 @@ pipeline {
             }
         }
 
-        stage('Set Image Tag') {
-    steps {
-        script {
-            env.GIT_COMMIT_SHORT = sh(
-                script: 'git rev-parse --short HEAD',
-                returnStdout: true
-            ).trim()
-
-            env.IMAGE = "${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
-
-            echo "Git Commit: ${env.GIT_COMMIT_SHORT}"
-            echo "Docker Image: ${env.IMAGE}"
-        }
-    }
-}
-
         stage('Test') {
             steps {
                 sh '''
-                    echo "Running application test..."
-                    python3 -m py_compile app.py
-                    echo "Test passed!"
+                    echo "Running application tests..."
+
+                    docker build \
+                        --target test \
+                        -t jenkins-eks-demo-test .
+
+                    echo "Running pytest inside Docker..."
+
+                    docker run --rm \
+                        jenkins-eks-demo-test \
+                        pytest
+
+                    echo "All tests passed!"
                 '''
+            }
+        }
+
+        stage('Set Image Tag') {
+            steps {
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    env.IMAGE = "${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+
+                    echo "Git Commit: ${env.GIT_COMMIT_SHORT}"
+                    echo "Docker Image: ${env.IMAGE}"
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 sh '''
-                    echo "Building Docker image..."
+                    echo "Building production Docker image..."
 
                     docker build \
                         -t ${IMAGE} .
@@ -146,6 +154,7 @@ pipeline {
             ========================================
             Build: ${BUILD_NUMBER}
             Image: ${IMAGE}
+            Git Commit: ${GIT_COMMIT_SHORT}
             EKS Cluster: ${EKS_CLUSTER_NAME}
             ========================================
             """
