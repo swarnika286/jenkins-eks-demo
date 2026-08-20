@@ -12,7 +12,7 @@ pipeline {
         EKS_CLUSTER_NAME = 'my-test-eks'
         K8S_NAMESPACE = 'default'
 
-        IMAGE = "${ECR_REGISTRY}/${ECR_REPOSITORY}:${BUILD_NUMBER}"
+        
     }
 
     stages {
@@ -22,6 +22,22 @@ pipeline {
                 checkout scm
             }
         }
+
+        stage('Set Image Tag') {
+    steps {
+        script {
+            env.GIT_COMMIT_SHORT = sh(
+                script: 'git rev-parse --short HEAD',
+                returnStdout: true
+            ).trim()
+
+            env.IMAGE = "${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+
+            echo "Git Commit: ${env.GIT_COMMIT_SHORT}"
+            echo "Docker Image: ${env.IMAGE}"
+        }
+    }
+}
 
         stage('Test') {
             steps {
