@@ -26,9 +26,14 @@ pipeline {
                 sh '''
                     echo "Running lint checks..."
 
+                    python3 -m venv .lint-venv
+                    . .lint-venv/bin/activate
+
                     pip install --quiet flake8
 
                     flake8 app.py test_app.py --max-line-length=100
+
+                    deactivate
 
                     echo "Lint passed!"
                 '''
@@ -212,7 +217,10 @@ pipeline {
         }
 
         always {
-            sh 'docker system prune -f || true'
+            sh '''
+                docker system prune -f || true
+                rm -rf .lint-venv || true
+            '''
         }
     }
 }
