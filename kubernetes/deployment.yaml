@@ -20,10 +20,17 @@ spec:
       containers:
         - name: jenkins-eks-demo
 
-          image: 982344023689.dkr.ecr.us-east-2.amazonaws.com/test-ecr:test
+          # Replaced by the Jenkins pipeline at deploy time (see Jenkinsfile "Deploy to EKS" stage)
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
 
           ports:
             - containerPort: 5000
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
 
           readinessProbe:
             httpGet:
@@ -47,3 +54,13 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jenkins-eks-demo-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jenkins-eks-demo

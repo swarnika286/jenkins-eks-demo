@@ -23,6 +23,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 
+# Run as a non-root user for security
+RUN useradd --create-home --uid 1000 appuser
+USER appuser
+
 EXPOSE 5000
 
 CMD ["python", "app.py"]

@@ -21,6 +21,20 @@ pipeline {
             }
         }
 
+        stage('Lint') {
+            steps {
+                sh '''
+                    echo "Running lint checks..."
+
+                    pip install --quiet flake8
+
+                    flake8 app.py test_app.py --max-line-length=100
+
+                    echo "Lint passed!"
+                '''
+            }
+        }
+
         stage('Test') {
             steps {
                 sh '''
@@ -63,9 +77,22 @@ pipeline {
                     echo "Building production Docker image..."
 
                     docker build \
+                        --target production \
                         -t ${IMAGE} .
 
                     echo "Docker image built successfully."
+                '''
+            }
+        }
+
+        stage('Scan Image') {
+            steps {
+                sh '''
+                    echo "Scanning image for vulnerabilities..."
+
+                    trivy image --exit-code 1 --severity CRITICAL,HIGH ${IMAGE}
+
+                    echo "Scan passed!"
                 '''
             }
         }
@@ -96,6 +123,12 @@ pipeline {
             }
         }
 
+        stage('Approve Deploy') {
+            steps {
+                input message: "Deploy ${env.IMAGE} to EKS cluster ${env.EKS_CLUSTER_NAME}?", ok: 'Deploy'
+            }
+        }
+
         stage('Deploy to EKS') {
             steps {
                 sh '''
@@ -105,24 +138,23 @@ pipeline {
                         --region ${AWS_REGION} \
                         --name ${EKS_CLUSTER_NAME}
 
+                    echo "Templating image into manifest..."
+
+                    sed "s|__IMAGE__|${IMAGE}|g" kubernetes/deployment.yaml > kubernetes/deployment.rendered.yaml
+
                     echo "Applying Kubernetes manifests..."
 
                     kubectl apply \
-                        -f kubernetes/ \
-                        -n ${K8S_NAMESPACE}
-
-                    echo "Updating deployment image..."
-
-                    kubectl set image \
-                        deployment/jenkins-eks-demo \
-                        jenkins-eks-demo=${IMAGE} \
+                        -f kubernetes/deployment.rendered.yaml \
+                        -f kubernetes/service.yaml \
                         -n ${K8S_NAMESPACE}
 
                     echo "Waiting for rollout..."
 
                     kubectl rollout status \
                         deployment/jenkins-eks-demo \
-                        -n ${K8S_NAMESPACE}
+                        -n ${K8S_NAMESPACE} \
+                        --timeout=120s
                 '''
             }
         }
@@ -168,6 +200,19 @@ pipeline {
             Check the failed stage above.
             ========================================
             """
+            script {
+                // Only attempt rollback if we got far enough to have deployed something
+                if (env.IMAGE) {
+                    sh '''
+                        echo "Attempting rollback of deployment/jenkins-eks-demo..."
+                        kubectl rollout undo deployment/jenkins-eks-demo -n ${K8S_NAMESPACE} || true
+                    '''
+                }
+            }
+        }
+
+        always {
+            sh 'docker system prune -f || true'
         }
     }
 }
