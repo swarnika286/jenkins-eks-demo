@@ -11,6 +11,8 @@ pipeline {
 
         EKS_CLUSTER_NAME = 'my-test-eks'
         K8S_NAMESPACE = 'default'
+
+        DEPLOYMENT_ATTEMPTED = 'false'
     }
 
     stages {
@@ -29,12 +31,6 @@ pipeline {
                     docker build \
                         --target test \
                         -t jenkins-eks-demo-test .
-
-                    echo "Running pytest inside Docker..."
-
-                    docker run --rm \
-                        jenkins-eks-demo-test \
-                        pytest
 
                     echo "All tests passed!"
                 '''
@@ -76,9 +72,12 @@ pipeline {
                 sh '''
                     echo "Scanning image for vulnerabilities..."
 
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH ${IMAGE}
+                    trivy image \
+                        --exit-code 1 \
+                        --severity CRITICAL,HIGH \
+                        ${IMAGE}
 
-                    echo "Scan passed!"
+                    echo "Security scan passed!"
                 '''
             }
         }
@@ -111,7 +110,8 @@ pipeline {
 
         stage('Approve Deploy') {
             steps {
-                input message: "Deploy ${env.IMAGE} to EKS cluster ${env.EKS_CLUSTER_NAME}?", ok: 'Deploy'
+                input message: "Deploy ${env.IMAGE} to EKS cluster ${env.EKS_CLUSTER_NAME}?",
+                      ok: 'Deploy'
             }
         }
 
@@ -126,7 +126,9 @@ pipeline {
 
                     echo "Templating image into manifest..."
 
-                    sed "s|__IMAGE__|${IMAGE}|g" kubernetes/deployment.yaml > kubernetes/deployment.rendered.yaml
+                    sed "s|__IMAGE__|${IMAGE}|g" \
+                        kubernetes/deployment.yaml \
+                        > kubernetes/deployment.rendered.yaml
 
                     echo "Applying Kubernetes manifests..."
 
@@ -134,7 +136,15 @@ pipeline {
                         -f kubernetes/deployment.rendered.yaml \
                         -f kubernetes/service.yaml \
                         -n ${K8S_NAMESPACE}
+                '''
 
+                script {
+                    // Kubernetes configuration was successfully applied.
+                    // From this point, rollback is possible if rollout fails.
+                    env.DEPLOYMENT_ATTEMPTED = 'true'
+                }
+
+                sh '''
                     echo "Waiting for rollout..."
 
                     kubectl rollout status \
@@ -186,22 +196,42 @@ pipeline {
             Check the failed stage above.
             ========================================
             """
+
             script {
-                // Only attempt rollback if we got far enough to have deployed something
-                if (env.IMAGE) {
+
+                if (env.DEPLOYMENT_ATTEMPTED == 'true') {
+
+                    echo "Deployment was attempted."
+                    echo "Attempting Kubernetes rollback..."
+
                     sh '''
-                        echo "Attempting rollback of deployment/jenkins-eks-demo..."
-                        kubectl rollout undo deployment/jenkins-eks-demo -n ${K8S_NAMESPACE} || true
+                        aws eks update-kubeconfig \
+                            --region ${AWS_REGION} \
+                            --name ${EKS_CLUSTER_NAME}
+
+                        kubectl rollout undo \
+                            deployment/jenkins-eks-demo \
+                            -n ${K8S_NAMESPACE}
+
+                        kubectl rollout status \
+                            deployment/jenkins-eks-demo \
+                            -n ${K8S_NAMESPACE} \
+                            --timeout=120s
                     '''
+
+                    echo "Rollback completed."
+
+                } else {
+
+                    echo "Deployment was not attempted."
+                    echo "Rollback is not required."
+
                 }
             }
         }
 
         always {
-            sh '''
-                docker system prune -f || true
-                rm -rf .lint-venv || true
-            '''
+            echo "Pipeline cleanup completed."
         }
     }
 }
