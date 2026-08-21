@@ -12,7 +12,7 @@ pipeline {
         EKS_CLUSTER_NAME = 'my-test-eks'
         K8S_NAMESPACE = 'default'
 
-        DEPLOYMENT_ATTEMPTED = 'false'
+        
     }
 
     stages {
