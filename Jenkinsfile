@@ -113,44 +113,34 @@ pipeline {
         }
 
         stage('Deploy to EKS') {
-            steps {
-                sh '''
-                    echo "Configuring kubectl..."
+    steps {
+        script {
+            env.DEPLOYMENT_ATTEMPTED = 'true'
 
-                    aws eks update-kubeconfig \
-                        --region ${AWS_REGION} \
-                        --name ${EKS_CLUSTER_NAME}
+            sh '''
+                echo "Configuring kubectl..."
 
-                    echo "Templating image into manifest..."
+                aws eks update-kubeconfig \
+                    --region ${AWS_REGION} \
+                    --name ${EKS_CLUSTER_NAME}
 
-                    sed "s|__IMAGE__|${IMAGE}|g" \
-                        kubernetes/deployment.yaml \
-                        > kubernetes/deployment.rendered.yaml
+                echo "Deploying intentionally BAD image..."
 
-                    echo "Applying Kubernetes manifests..."
+                kubectl set image \
+                    deployment/jenkins-eks-demo \
+                    jenkins-eks-demo=${ECR_REGISTRY}/${ECR_REPOSITORY}:DOES-NOT-EXIST \
+                    -n ${K8S_NAMESPACE}
 
-                    kubectl apply \
-                        -f kubernetes/deployment.rendered.yaml \
-                        -f kubernetes/service.yaml \
-                        -n ${K8S_NAMESPACE}
-                '''
+                echo "Waiting for rollout..."
 
-                script {
-                    // Kubernetes configuration was successfully applied.
-                    // From this point, rollback is possible if rollout fails.
-                    env.DEPLOYMENT_ATTEMPTED = 'true'
-                }
-
-                sh '''
-                    echo "Waiting for rollout..."
-
-                    kubectl rollout status \
-                        deployment/jenkins-eks-demo \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=120s
-                '''
-            }
+                kubectl rollout status \
+                    deployment/jenkins-eks-demo \
+                    -n ${K8S_NAMESPACE} \
+                    --timeout=60s
+            '''
         }
+    }
+}
 
         stage('Verify') {
             steps {
